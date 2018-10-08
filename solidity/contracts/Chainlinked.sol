@@ -4,7 +4,7 @@ import "./ChainlinkLib.sol";
 import "./ENSResolver.sol";
 import "./Oracle.sol";
 import "@ensdomains/ens/contracts/ENS.sol";
-import "link_token/contracts/LinkToken.sol";
+import "./LinkTokenInterface.sol";
 
 contract Chainlinked {
   using ChainlinkLib for ChainlinkLib.Run;
@@ -13,7 +13,7 @@ contract Chainlinked {
   uint256 constant private clArgsVersion = 1;
   uint256 constant private linkDivisibility = 10**18;
 
-  LinkToken private link;
+  LinkTokenInterface private link;
   Oracle private oracle;
   uint256 private requests = 1;
   mapping(bytes32 => address) private unfulfilledRequests;
@@ -67,15 +67,15 @@ contract Chainlinked {
   }
 
   function setLinkToken(address _link) internal {
-    link = LinkToken(_link);
+    link = LinkTokenInterface(_link);
   }
 
   function chainlinkToken()
     internal
     view
-    returns (address)
+    returns (LinkTokenInterface)
   {
-    return address(link);
+    return link;
   }
 
   function newChainlinkWithENS(address _ens, bytes32 _node)
