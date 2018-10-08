@@ -91,7 +91,7 @@ func (js *jobSubscriber) OnNewHead(head *models.BlockHeader) {
 
 	ibn := head.ToIndexableBlockNumber()
 	for _, jr := range pendingRuns {
-		jr.Overrides, err = jr.Overrides.Merge(jr.Result)
+		jr.StoreNextRunInput(jr.Result)
 		if js.store.Save(&jr); err != nil {
 			logger.Error("error updating job run", err.Error())
 			continue
