@@ -61,17 +61,28 @@ func (jr JobRun) ForLogger(kvs ...interface{}) []interface{} {
 // UnfinishedTaskRuns returns a list of TaskRuns for a JobRun
 // which are not Completed or Errored.
 func (jr JobRun) UnfinishedTaskRuns() []TaskRun {
-	unfinished := jr.TaskRuns
-	for _, tr := range jr.TaskRuns {
-		if tr.Status.Completed() {
-			unfinished = unfinished[1:]
-		} else if tr.Status.Errored() {
-			return []TaskRun{}
-		} else {
-			return unfinished
+	nextTaskIndex, runnable := jr.nextTaskIndex()
+	if runnable {
+		return jr.TaskRuns[nextTaskIndex:]
+	}
+	return []TaskRun{}
+}
+
+func (jr JobRun) nextTaskIndex() (int, bool) {
+	for index, tr := range jr.TaskRuns {
+		if !(tr.Status.Completed() || tr.Status.Errored()) {
+			return index, true
 		}
 	}
-	return unfinished
+	return 0, false
+}
+
+// StoreNextRunInput saves the input for the next runnable job, if there is one
+func (jr *JobRun) StoreNextRunInput(input RunResult) {
+	nextTaskIndex, runnable := jr.nextTaskIndex()
+	if runnable {
+		jr.TaskRuns[nextTaskIndex].Result = input
+	}
 }
 
 // NextTaskRun returns the next immediate TaskRun in the list

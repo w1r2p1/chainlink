@@ -11,7 +11,8 @@ func ExportedExecuteRunAtBlock(
 	overrides models.RunResult,
 	blockNumber *models.IndexableBlockNumber,
 ) (models.JobRun, error) {
-	return executeRunAtBlock(run, store, overrides, blockNumber)
+	run.Overrides = overrides
+	return executeRunAtBlock(run, store, blockNumber)
 }
 
 func ExportedChannelForRun(jr JobRunner, runID string) chan<- store.RunRequest {
