@@ -1,0 +1,38 @@
+#!/usr/bin/env node
+
+const Eth = require('ethjs')
+const Wallet = require('./app/wallet.js')
+const Utils = require('./app/utils.js')
+const abi = require('ethereumjs-abi')
+
+
+if (process.argv.length < 2) {
+  console.error('Usage: ./request_eth_price <contract address>')
+  process.exit(1)
+}
+
+const consumer = process.argv[2]
+
+const providerUrl = process.env['ETH_HTTP_URL'] || 'http://localhost:18545'
+const utils = Utils(new Eth.HttpProvider(providerUrl))
+const privateKey = process.env['PRIVATE_KEY'] || '4d6cf3ce1ac71e79aa33cf481dedf2e73acb548b1294a70447c960784302d2fb'
+const wallet = Wallet(privateKey, utils)
+
+const funcSelector = "0x6c0cae68" // "requestEthereumPrice(string)",
+const encoded = abi.rawEncode(['string'], ["USD"])
+
+
+wallet.send({
+  to: consumer,
+  data: (funcSelector + encoded.toString('hex'))
+})
+.then(utils.getTxReceipt)
+.then(receipt => {
+  console.log(receipt)
+  if (receipt.logs.length) {
+    console.log(receipt.logs[3].topics)
+    console.log(`price successfully requested`)
+  } else {
+    console.log("FAILED!!!")
+  }
+})

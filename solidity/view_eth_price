@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+
+const Eth = require('ethjs')
+const Wallet = require('./app/wallet.js')
+const Utils = require('./app/utils.js')
+const Web3 = require('web3')
+const w3 = new Web3()
+
+
+if (process.argv.length < 2) {
+  console.error('Usage: ./view_eth_price <contract address>')
+  process.exit(1)
+}
+
+const consumer = process.argv[2]
+
+const providerUrl = process.env['ETH_HTTP_URL'] || 'http://localhost:18545'
+const utils = Utils(new Eth.HttpProvider(providerUrl))
+const privateKey = process.env['PRIVATE_KEY'] || '4d6cf3ce1ac71e79aa33cf481dedf2e73acb548b1294a70447c960784302d2fb'
+const wallet = Wallet(privateKey, utils)
+
+const funcSelector = "0x9d1b464a"// "currentPrice()"
+
+wallet.call({
+  to: consumer,
+  data: funcSelector,
+}).then(hex => {
+  const res = w3.utils.hexToUtf8(hex)
+  if (res.length) {
+    console.log(`current ETH price: ${res}`)
+  } else {
+    console.log(`No price listed`)
+  }
+})

@@ -15,6 +15,8 @@ module.exports = function Wallet (key, utils) {
     nextNonce: nextNonce,
     send: async (params) => {
       const defaults = {
+        gas: 2500000,
+        gasPrice: 10000000000,
         nonce: await nextNonce(),
         chainId: 0
       }
@@ -22,6 +24,9 @@ module.exports = function Wallet (key, utils) {
       tx.sign(privateKey)
       let txHex = tx.serialize().toString('hex')
       return eth.sendRawTransaction(txHex)
+    },
+    call: async (params) => {
+      return eth.call(params)
     }
   }
 }
