@@ -92,11 +92,12 @@ func (js *jobSubscriber) OnNewHead(head *models.BlockHeader) {
 	ibn := head.ToIndexableBlockNumber()
 	for _, jr := range pendingRuns {
 		jr.StoreNextRunInput(jr.Result)
+		jr.StoreObservedBlockHeight(ibn)
 		if js.store.Save(&jr); err != nil {
 			logger.Error("error updating job run", err.Error())
 			continue
 		}
-		if err := js.store.RunChannel.Send(jr.ID, ibn); err != nil {
+		if err := js.store.RunChannel.Send(jr.ID); err != nil {
 			logger.Error("JobSubscriber.OnNewHead: ", err.Error())
 		}
 	}

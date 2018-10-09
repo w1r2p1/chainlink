@@ -18,7 +18,7 @@ type JobRunner interface {
 	Start() error
 	Stop()
 	resumeSleepingRuns() error
-	channelForRun(string) chan<- store.RunRequest
+	channelForRun(string) chan<- struct{}
 	workerCount() int
 }
 
@@ -28,7 +28,7 @@ type jobRunner struct {
 	bootMutex            sync.Mutex
 	store                *store.Store
 	workerMutex          sync.RWMutex
-	workers              map[string]chan store.RunRequest
+	workers              map[string]chan struct{}
 	workersWg            sync.WaitGroup
 	demultiplexStopperWg sync.WaitGroup
 }
@@ -37,7 +37,7 @@ type jobRunner struct {
 func NewJobRunner(str *store.Store) JobRunner {
 	return &jobRunner{
 		store:   str,
-		workers: make(map[string]chan store.RunRequest),
+		workers: make(map[string]chan struct{}),
 	}
 }
 
@@ -80,7 +80,7 @@ func (rm *jobRunner) resumeSleepingRuns() error {
 		return err
 	}
 	for _, run := range pendingRuns {
-		rm.store.RunChannel.Send(run.ID, nil)
+		rm.store.RunChannel.Send(run.ID)
 	}
 	return nil
 }
@@ -99,18 +99,18 @@ func (rm *jobRunner) demultiplexRuns(starterWg *sync.WaitGroup) {
 				logger.Panic("RunChannel closed before JobRunner, can no longer demultiplexing job runs")
 				return
 			}
-			rm.channelForRun(rr.ID) <- rr
+			rm.channelForRun(rr.ID) <- struct{}{}
 		}
 	}
 }
 
-func (rm *jobRunner) channelForRun(runID string) chan<- store.RunRequest {
+func (rm *jobRunner) channelForRun(runID string) chan<- struct{} {
 	rm.workerMutex.Lock()
 	defer rm.workerMutex.Unlock()
 
 	workerChannel, present := rm.workers[runID]
 	if !present {
-		workerChannel = make(chan store.RunRequest, 1000)
+		workerChannel = make(chan struct{}, 1000)
 		rm.workers[runID] = workerChannel
 		rm.workersWg.Add(1)
 
@@ -128,18 +128,15 @@ func (rm *jobRunner) channelForRun(runID string) chan<- store.RunRequest {
 	return workerChannel
 }
 
-func (rm *jobRunner) workerLoop(runID string, workerChannel chan store.RunRequest) {
+func (rm *jobRunner) workerLoop(runID string, workerChannel chan struct{}) {
 	for {
 		select {
-		case rr := <-workerChannel:
+		case <-workerChannel:
 			jr, err := rm.store.FindJobRun(runID)
 			if err != nil {
 				logger.Errorw(fmt.Sprint("Application Run Channel Executor: error finding run ", runID), jr.ForLogger("error", err)...)
 			}
-			if rr.BlockNumber != nil {
-				logger.Debug("Woke up", jr.ID, "worker to process ", rr.BlockNumber.ToInt())
-			}
-			if jr, err = executeRunAtBlock(jr, rm.store, rr.BlockNumber); err != nil {
+			if jr, err = executeRun(jr, rm.store); err != nil {
 				logger.Errorw(fmt.Sprint("Application Run Channel Executor: error executing run ", runID), jr.ForLogger("error", err)...)
 			}
 
@@ -166,7 +163,8 @@ func BuildRun(
 	job models.JobSpec,
 	i models.Initiator,
 	store *store.Store,
-	overrides models.RunResult,
+	input models.RunResult,
+	currentBlockHeight *models.IndexableBlockNumber,
 ) (models.JobRun, error) {
 	now := store.Clock.Now()
 	if !job.Started(now) {
@@ -180,22 +178,12 @@ func BuildRun(
 		}
 	}
 	run := job.NewRun(i)
-	run.Overrides = overrides
-	return run, nil
-}
-
-// BuildRunWithValidPayment builds a new run and validates whether or not the
-// run meets the minimum contract payment.
-func BuildRunWithValidPayment(
-	job models.JobSpec,
-	initr models.Initiator,
-	input models.RunResult,
-	store *store.Store,
-) (models.JobRun, error) {
-	run, err := BuildRun(job, initr, store, input)
-	if err != nil {
-		return models.JobRun{}, err
+	run.Overrides = input
+	if currentBlockHeight != nil {
+		run.CreationHeight = &currentBlockHeight.Number
 	}
+	run.StoreObservedBlockHeight(currentBlockHeight)
+
 	if input.Amount != nil &&
 		store.Config.MinimumContractPayment.Cmp(input.Amount) > 0 {
 		err := fmt.Errorf(
@@ -207,34 +195,23 @@ func BuildRunWithValidPayment(
 		return run, multierr.Append(err, store.Save(&run))
 	}
 
-	return run, err
+	return run, nil
 }
 
-// EnqueueRunWithValidPayment creates a run and enqueues it on the run channel
-func EnqueueRunWithValidPayment(
+// EnqueueRun creates a run and wakes up the Job Runner to process it
+func EnqueueRun(
 	job models.JobSpec,
 	initr models.Initiator,
 	input models.RunResult,
 	store *store.Store,
+	currentBlockHeight *models.IndexableBlockNumber,
 ) (models.JobRun, error) {
-	return EnqueueRunAtBlockWithValidPayment(job, initr, input, store, nil)
-}
-
-// EnqueueRunAtBlockWithValidPayment creates a run and enqueues it on the run
-// channel with the given block number
-func EnqueueRunAtBlockWithValidPayment(
-	job models.JobSpec,
-	initr models.Initiator,
-	input models.RunResult,
-	store *store.Store,
-	bn *models.IndexableBlockNumber,
-) (models.JobRun, error) {
-	run, err := BuildRunWithValidPayment(job, initr, input, store)
+	run, err := BuildRun(job, initr, store, input, currentBlockHeight)
 
 	if err == nil {
 		err = store.Save(&run)
 		if err == nil {
-			store.RunChannel.Send(run.ID, bn)
+			store.RunChannel.Send(run.ID)
 		} else {
 			logger.Errorw(err.Error())
 		}
@@ -243,15 +220,11 @@ func EnqueueRunAtBlockWithValidPayment(
 	return run, err
 }
 
-// executeRunAtBlock starts the job and executes task runs within that job in the
+// executeRunstarts the job and executes task runs within that job in the
 // order defined in the run for as long as they do not return errors. Results
 // are saved in the store (db).
-func executeRunAtBlock(
-	jr models.JobRun,
-	store *store.Store,
-	bn *models.IndexableBlockNumber,
-) (models.JobRun, error) {
-	jr, err := prepareJobRun(jr, store, bn)
+func executeRun(jr models.JobRun, store *store.Store) (models.JobRun, error) {
+	jr, err := prepareJobRun(jr, store)
 	if err != nil {
 		return jr, wrapExecuteRunAtBlockError(jr, err)
 	}
@@ -272,7 +245,7 @@ func executeRunAtBlock(
 			return jr, wrapExecuteRunAtBlockError(jr, err)
 		}
 
-		lastRun := markCompletedIfRunnable(startTask(jr, nextTaskRun, prevResult, bn, store))
+		lastRun := markCompletedIfRunnable(startTask(jr, nextTaskRun, prevResult, store))
 		jr.TaskRuns[i+offset] = lastRun
 		logTaskResult(lastRun, nextTaskRun, i)
 		prevResult = lastRun.Result
@@ -290,11 +263,7 @@ func executeRunAtBlock(
 	return jr, wrapExecuteRunAtBlockError(jr, store.Save(&jr))
 }
 
-func prepareJobRun(
-	jr models.JobRun,
-	store *store.Store,
-	bn *models.IndexableBlockNumber,
-) (models.JobRun, error) {
+func prepareJobRun(jr models.JobRun, store *store.Store) (models.JobRun, error) {
 	if jr.Status.CanStart() {
 		jr.Status = models.RunStatusInProgress
 	} else {
@@ -306,7 +275,7 @@ func prepareJobRun(
 	if jr.Result.HasError() {
 		return jr, jr.Result
 	}
-	return store.SaveCreationHeight(jr, bn)
+	return jr, nil
 }
 
 func logTaskResult(lr models.TaskRun, tr models.TaskRun, i int) {
@@ -325,7 +294,6 @@ func startTask(
 	jr models.JobRun,
 	tr models.TaskRun,
 	input models.RunResult,
-	bn *models.IndexableBlockNumber,
 	store *store.Store,
 ) models.TaskRun {
 	adapter, err := adapters.For(tr.Task, store)
@@ -338,7 +306,7 @@ func startTask(
 		tr.Task.Confirmations,
 		adapter.MinConfs())
 
-	if !jr.Runnable(bn, minConfs) {
+	if !jr.Runnable(minConfs) {
 		tr = tr.MarkPendingConfirmations()
 		tr.Result.Data = input.Data
 		return tr
@@ -349,7 +317,7 @@ func startTask(
 
 func wrapExecuteRunAtBlockError(run models.JobRun, err error) error {
 	if err != nil {
-		return fmt.Errorf("executeRunAtBlock: Job#%v: %v", run.JobID, err)
+		return fmt.Errorf("executeRun: Job#%v: %v", run.JobID, err)
 	}
 	return nil
 }

@@ -54,7 +54,7 @@ func TestJobRun_UnfinishedTaskRuns(t *testing.T) {
 	assert.NoError(t, store.Save(&run))
 	assert.Equal(t, run.TaskRuns, run.UnfinishedTaskRuns())
 
-	store.RunChannel.Send(run.ID, nil)
+	store.RunChannel.Send(run.ID)
 	cltest.WaitForJobRunStatus(t, store, run, models.RunStatusPendingConfirmations)
 
 	store.One("ID", run.ID, &run)
@@ -88,7 +88,9 @@ func TestTaskRun_Runnable(t *testing.T) {
 				jr.CreationHeight = test.creationHeight
 			}
 
-			assert.Equal(t, test.want, jr.Runnable(test.currentHeight, test.minimumConfirmations))
+			jr.StoreObservedBlockHeight(test.currentHeight)
+
+			assert.Equal(t, test.want, jr.Runnable(test.minimumConfirmations))
 		})
 	}
 }

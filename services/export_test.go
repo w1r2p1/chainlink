@@ -8,14 +8,13 @@ import (
 func ExportedExecuteRunAtBlock(
 	run models.JobRun,
 	store *store.Store,
-	overrides models.RunResult,
-	blockNumber *models.IndexableBlockNumber,
+	input models.RunResult,
 ) (models.JobRun, error) {
-	run.Overrides = overrides
-	return executeRunAtBlock(run, store, blockNumber)
+	run.Overrides = input
+	return executeRun(run, store)
 }
 
-func ExportedChannelForRun(jr JobRunner, runID string) chan<- store.RunRequest {
+func ExportedChannelForRun(jr JobRunner, runID string) chan<- struct{} {
 	return jr.channelForRun(runID)
 }
 

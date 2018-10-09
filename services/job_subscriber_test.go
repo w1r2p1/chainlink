@@ -179,7 +179,6 @@ func TestJobSubscriber_OnNewHead_OnlySendPendingConfirmationsAndInProgress(t *te
 			js.OnNewHead(block)
 			if test.wantSend {
 				assert.Equal(t, 1, len(mockRunChannel.Runs))
-				assert.Equal(t, block.Number, mockRunChannel.BlockNumbers[0].Number)
 			} else {
 				assert.Equal(t, 0, len(mockRunChannel.Runs))
 			}

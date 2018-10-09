@@ -128,7 +128,7 @@ func resumeJob(jr *models.JobRun, input models.RunResult, store *store.Store) er
 
 func startJob(j models.JobSpec, s *store.Store, body models.JSON) (models.JobRun, error) {
 	i := j.InitiatorsFor(models.InitiatorWeb)[0]
-	jr, err := services.BuildRun(j, i, s, models.RunResult{Data: body})
+	jr, err := services.BuildRun(j, i, s, models.RunResult{Data: body}, nil)
 	if err != nil {
 		return jr, err
 	}
@@ -141,7 +141,7 @@ func startJob(j models.JobSpec, s *store.Store, body models.JSON) (models.JobRun
 
 func executeRun(jr models.JobRun, s *store.Store) {
 	go func() {
-		if err := s.RunChannel.Send(jr.ID, nil); err != nil {
+		if err := s.RunChannel.Send(jr.ID); err != nil {
 			logger.Error("Web initiator: ", err.Error())
 		}
 	}()

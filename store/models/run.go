@@ -77,6 +77,14 @@ func (jr JobRun) nextTaskIndex() (int, bool) {
 	return 0, false
 }
 
+// StoreObservedBlockHeight saves the most recently seen height of the blockchain
+func (jr *JobRun) StoreObservedBlockHeight(currentHeight *IndexableBlockNumber) {
+	nextTaskIndex, runnable := jr.nextTaskIndex()
+	if runnable && currentHeight != nil {
+		jr.TaskRuns[nextTaskIndex].ObservedHeight = &currentHeight.Number
+	}
+}
+
 // StoreNextRunInput saves the input for the next runnable job, if there is one
 func (jr *JobRun) StoreNextRunInput(input RunResult) {
 	nextTaskIndex, runnable := jr.nextTaskIndex()
@@ -94,12 +102,13 @@ func (jr JobRun) NextTaskRun() TaskRun {
 // Runnable checks that the number of confirmations have passed since the
 // job's creation height to determine if the JobRun can be started. Returns
 // true for non-JobSubscriber (runlog & ethlog) initiators.
-func (jr JobRun) Runnable(currentHeight *IndexableBlockNumber, minConfs uint64) bool {
-	if jr.CreationHeight == nil || currentHeight == nil {
+func (jr JobRun) Runnable(minConfs uint64) bool {
+	observedHeight := jr.NextTaskRun().ObservedHeight
+	if jr.CreationHeight == nil || observedHeight == nil {
 		return true
 	}
 
-	diff := new(big.Int).Sub(currentHeight.ToInt(), jr.CreationHeight.ToInt())
+	diff := new(big.Int).Sub(observedHeight.ToInt(), jr.CreationHeight.ToInt())
 	min := new(big.Int).SetUint64(minConfs)
 	min = min.Sub(min, big.NewInt(1))
 	return diff.Cmp(min) >= 0
@@ -127,10 +136,11 @@ func (jr JobRun) MarkCompleted() JobRun {
 // TaskRun stores the Task and represents the status of the
 // Task to be ran.
 type TaskRun struct {
-	ID     string    `json:"id" storm:"id,unique"`
-	Result RunResult `json:"result"`
-	Status RunStatus `json:"status"`
-	Task   TaskSpec  `json:"task"`
+	ID             string       `json:"id" storm:"id,unique"`
+	Result         RunResult    `json:"result"`
+	Status         RunStatus    `json:"status"`
+	Task           TaskSpec     `json:"task"`
+	ObservedHeight *hexutil.Big `json:"observedHeight"`
 }
 
 // String returns info on the TaskRun as "ID,Type,Status,Result".
